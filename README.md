@@ -16,7 +16,7 @@ Build a web application where a restaurant owner can type requests like:
 
 **...and the system generates the appropriate visualization dynamically.**
 
-**Key Challenge**: You have 5 messy JSON files with different schemas. Clean them up, normalize them into a unified format, then build the AI-powered dashboard on top.
+**Key Challenge**: You have 6 messy JSON files with different schemas. Clean them up, normalize them into a unified format, then build the AI-powered dashboard on top.
 
 ---
 
@@ -130,7 +130,7 @@ We use Supabase internally at Clave. This lets us evaluate:
 
 This assessment tests **real data engineering + AI integration skills**. You'll need to:
 
-- Parse and clean 5 different JSON data formats
+- Parse and clean 6 different JSON data formats
 - Design a Supabase database schema for restaurant analytics
 - Handle data type conversions, missing fields, and structural differences
 - Build an AI system that understands natural language queries
