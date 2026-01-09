@@ -100,7 +100,7 @@ def main():
                 r["order_id"] = order_id
             sb.table("order_items").insert(item_rows).execute()
 
-    print("✅ Toast ingestion done")
+    print("Toast ingestion done")
 
 if __name__ == "__main__":
     main()

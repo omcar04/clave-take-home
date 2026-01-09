@@ -115,7 +115,7 @@ def main():
         if item_rows:
             sb.table("order_items").insert(item_rows).execute()
 
-    print("✅ DoorDash ingestion done")
+    print("DoorDash ingestion done")
 
 if __name__ == "__main__":
     main()

@@ -47,13 +47,13 @@
 
 ### 3) Item price fields (line-item pricing)
 
-| Field (canonical) | Toast selections[]                    | DoorDash order_items[]   | Square line_items[]                         |
-| ----------------- | ------------------------------------- | ------------------------ | ------------------------------------------- |
-| raw_item_name     | `selection.displayName` / `item.name` | `item.name`              | from `catalog.json` via `catalog_object_id` |
-| raw_category      | `selection.itemGroup.name`            | `item.category`          | from catalog item/category_id               |
-| quantity          | `selection.quantity` (number)         | `item.quantity` (number) | `line_item.quantity` (string → number)      |
-| unit_price_cents  | derive if needed (`price/quantity`)   | `item.unit_price`        | can derive from catalog variation price     |
-| line_total_cents  | `selection.price`                     | `item.total_price`       | `line_item.total_money.amount` (or gross)   |
+| Field (canonical) | Toast selections[]                    | DoorDash order_items[]   | Square line_items[]                                                              |
+| ----------------- | ------------------------------------- | ------------------------ | -------------------------------------------------------------------------------- |
+| raw_item_name     | `selection.displayName` / `item.name` | `item.name`              | from `catalog.json` via `catalog_object_id`                                      |
+| raw_category      | `selection.itemGroup.name`            | `item.category`          | from catalog item/category_id                                                    |
+| quantity          | `selection.quantity` (number)         | `item.quantity` (number) | `line_item.quantity` (string → number)                                           |
+| unit_price_cents  | derive if needed (`price/quantity`)   | `item.unit_price`        | can derive from catalog variation price                                          |
+| line_total_cents  | `selection.price`                     | `item.total_price`       | `line_items[].total_money.amount (preferred; fallback gross_sales_money.amount)` |
 
 ## Cleaning targets (what to normalize later)
 

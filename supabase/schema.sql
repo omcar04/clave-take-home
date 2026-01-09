@@ -38,3 +38,4 @@ create table if not exists order_items (
 
 create index if not exists idx_order_items_order on order_items (order_id);
 create index if not exists idx_order_items_norm_name on order_items (normalized_name);
+
