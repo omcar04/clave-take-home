@@ -1,59 +1,54 @@
 "use client";
 
 import {
-  ResponsiveContainer,
-  LineChart,
+  CartesianGrid,
   Line,
+  LineChart,
+  ResponsiveContainer,
+  Tooltip,
   XAxis,
   YAxis,
-  Tooltip,
-  CartesianGrid,
 } from "recharts";
 
-type Row = {
-  hour: number;
-  sales_cents: number;
-};
+type HourPoint = { hour: number; sales_cents: number };
+type DayPoint = { date: string; sales_cents: number };
 
-function dollars(cents: number) {
-  return `$${(cents / 100).toFixed(2)}`;
-}
+export default function HourlySalesChart(props: {
+  data: (HourPoint | DayPoint)[];
+}) {
+  const { data } = props;
 
-export default function HourlySalesChart({ data }: { data: Row[] }) {
-  const chartData = (data ?? []).map((d) => ({
-    hour: d.hour,
-    sales_cents: d.sales_cents,
-    sales_dollars: d.sales_cents / 100,
-  }));
+  const isDaily = data.length > 0 && "date" in (data[0] as any);
+  const xKey = isDaily ? "date" : "hour";
+
+  function formatCurrency(cents: number) {
+    return `$${(cents / 100).toFixed(2)}`;
+  }
 
   return (
-    <div style={{ width: "100%", height: 280 }}>
+    <div style={{ width: "100%", height: 260 }}>
       <ResponsiveContainer>
-        <LineChart
-          data={chartData}
-          margin={{ top: 8, right: 12, left: 0, bottom: 8 }}
-        >
+        <LineChart data={data as any}>
           <CartesianGrid strokeDasharray="3 3" />
           <XAxis
-            dataKey="hour"
-            tickFormatter={(h) => `${h}`}
-            interval={1}
-            minTickGap={8}
+            dataKey={xKey}
+            tickFormatter={(v) => (isDaily ? String(v) : `${v}:00`)}
           />
-          <YAxis tickFormatter={(v) => `$${v}`} />
+          <YAxis tickFormatter={(v) => String(v)} />
           <Tooltip
-            formatter={(value: any, name) => {
-              if (name === "sales_dollars") return dollars(Number(value) * 100);
-              return value;
+            formatter={(value: any) => {
+              // Heuristic:
+              // - if values look like small counts (<= 200), show as number
+              // - else treat as cents
+              const n = Number(value ?? 0);
+              if (Number.isFinite(n) && n <= 200) return [n, "Value"];
+              return [formatCurrency(n), "Value"];
             }}
-            labelFormatter={(label) => `Hour ${label}`}
+            labelFormatter={(label) =>
+              isDaily ? `Date: ${label}` : `Hour: ${label}:00`
+            }
           />
-          <Line
-            type="monotone"
-            dataKey="sales_dollars"
-            dot={false}
-            strokeWidth={2}
-          />
+          <Line type="monotone" dataKey="sales_cents" dot={false} />
         </LineChart>
       </ResponsiveContainer>
     </div>
