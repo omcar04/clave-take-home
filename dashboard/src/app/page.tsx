@@ -1,4 +1,4 @@
-// app/page.tsx
+// ✅ MODIFIED FILE: app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
@@ -12,7 +12,7 @@ type BarWidget = {
   title: string;
   note?: string;
   type: "bar";
-  value_type?: "currency" | "count"; // ✅ NEW (for takeout counts)
+  value_type?: "currency" | "count";
   data: { location_name: string; sales_cents: number }[];
 };
 
@@ -30,7 +30,6 @@ type LineWidget = {
   title: string;
   note?: string;
   type: "line";
-  // ✅ allow both shapes (hourly + daily)
   data:
     | { hour: number; sales_cents: number }[]
     | { date: string; sales_cents: number }[];
@@ -44,7 +43,17 @@ type PieWidget = {
   data: { channel: string; sales_cents: number }[];
 };
 
-type Widget = BarWidget | TableWidget | LineWidget | PieWidget;
+// ✅ NEW metric widget
+type MetricWidget = {
+  id: string;
+  type: "metric";
+  title: string;
+  value: number; // cents for currency
+  value_type: "currency" | "count";
+  note?: string;
+};
+
+type Widget = BarWidget | TableWidget | LineWidget | PieWidget | MetricWidget;
 
 type ChatTurn = {
   id: string;
@@ -67,6 +76,10 @@ function uid(prefix = "t") {
 
 function dollars(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
+}
+
+function formatMetricValue(value: number, valueType: "currency" | "count") {
+  return valueType === "count" ? `${Math.round(value)}` : dollars(value);
 }
 
 function sumSalesCents(
@@ -109,7 +122,6 @@ export default function Page() {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
-  // Avoid expensive smooth scrolling on every streaming-ish update
   useEffect(() => {
     bottomRef.current?.scrollIntoView({
       behavior: loading ? "auto" : "smooth",
@@ -129,6 +141,7 @@ export default function Page() {
     "top items at Mall",
     "daily revenue for first week",
     "how much came from DoorDash",
+    "revenue on Jan 3rd", // ✅ nice demo
   ];
 
   function clearChat() {
@@ -213,10 +226,8 @@ export default function Page() {
 
   return (
     <main className="min-h-screen text-zinc-900">
-      {/* Lightweight background */}
       <div className="fixed inset-0 -z-10 bg-gradient-to-b from-[#A9B8BE] via-[#C7D6D7] to-[#EEF0EC]" />
 
-      {/* Header */}
       <header className="sticky top-0 z-10 border-b border-black/10 bg-white/80 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2 font-extrabold tracking-wide">
@@ -240,9 +251,7 @@ export default function Page() {
         </div>
       </header>
 
-      {/* Chat area (IMPORTANT: pb-28 reserves room for the floating input) */}
       <div className="mx-auto max-w-3xl px-4 pt-4 pb-28">
-        {/* Empty state / suggestions */}
         {turns.length === 0 ? (
           <div className="rounded-2xl border border-black/10 bg-white p-4">
             <div className="text-sm font-semibold">Ask Clave AI</div>
@@ -269,7 +278,6 @@ export default function Page() {
           </div>
         ) : null}
 
-        {/* Turns */}
         <div className="mt-4 space-y-4">
           {turns.map((t) => {
             const isUser = t.role === "user";
@@ -278,7 +286,6 @@ export default function Page() {
                 <div
                   className={`flex ${isUser ? "justify-end" : "justify-start"}`}
                 >
-                  {/* ✅ user bubble black + text white */}
                   <div
                     className={[
                       "max-w-[85%] rounded-2xl border border-black/10 px-4 py-3",
@@ -302,7 +309,6 @@ export default function Page() {
                   </div>
                 </div>
 
-                {/* Widgets */}
                 {t.role === "assistant" && t.widgets?.length ? (
                   <div className="space-y-3">
                     {t.widgets.map((w) => (
@@ -319,14 +325,25 @@ export default function Page() {
                         ) : null}
 
                         <div className="mt-3">
-                          {w.type === "bar" ? (
+                          {/* ✅ NEW: metric card rendering */}
+                          {w.type === "metric" ? (
+                            <div className="rounded-2xl border border-black/10 bg-white p-4">
+                              <div className="text-3xl font-extrabold tracking-tight">
+                                {formatMetricValue(w.value, w.value_type)}
+                              </div>
+                              <div className="mt-1 text-sm text-zinc-600">
+                                {w.value_type === "currency"
+                                  ? "Total"
+                                  : "Count"}
+                              </div>
+                            </div>
+                          ) : w.type === "bar" ? (
                             <SalesByLocationChart
                               data={w.data}
                               valueType={w.value_type ?? "currency"}
                             />
                           ) : w.type === "line" ? (
                             <>
-                              {/* ✅ Summary for line charts (total + peak) */}
                               {Array.isArray(w.data) &&
                               (w.data as any[]).length ? (
                                 <div className="mb-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-zinc-700">
@@ -417,7 +434,6 @@ export default function Page() {
             );
           })}
 
-          {/* Anchor: ensures "scrollIntoView" doesn't land behind the pill */}
           <div ref={bottomRef} className="scroll-mb-28" />
 
           {err ? (
@@ -428,7 +444,6 @@ export default function Page() {
         </div>
       </div>
 
-      {/* Floating input pill ONLY */}
       <form
         onSubmit={onSubmit}
         className="fixed bottom-6 left-1/2 z-50 w-[min(720px,calc(100vw-24px))] -translate-x-1/2"

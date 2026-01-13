@@ -1,4 +1,4 @@
-// app/api/agent/route.ts
+// ✅ UPDATED FILE: app/api/agent/route.ts
 import { NextResponse } from "next/server";
 import OpenAI from "openai";
 import { z } from "zod";
@@ -11,7 +11,7 @@ type BarWidget = {
   title: string;
   note?: string;
   type: "bar";
-  value_type?: "currency" | "count"; // ✅ so takeout counts don’t look like dollars
+  value_type?: "currency" | "count";
   data: { location_name: string; sales_cents: number }[];
 };
 
@@ -42,11 +42,25 @@ type PieWidget = {
   data: { channel: string; sales_cents: number }[];
 };
 
-type Widget = BarWidget | TableWidget | LineWidget | PieWidget;
+type MetricWidget = {
+  id: string;
+  type: "metric";
+  title: string;
+  value: number; // cents for currency, raw count for count
+  value_type: "currency" | "count";
+  note?: string;
+};
+
+type Widget = BarWidget | TableWidget | LineWidget | PieWidget | MetricWidget;
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 type Metric = "sales" | "revenue";
+
+/**
+ * ✅ Use enriched view for deterministic channel/is_takeout/is_doordash
+ */
+const ORDERS_VIEW = "v_orders_enriched";
 
 /**
  * ✅ Preprocess helper: converts null -> undefined so "optional" fields won't fail Zod
@@ -54,37 +68,74 @@ type Metric = "sales" | "revenue";
 const nullToUndefined = <T extends z.ZodTypeAny>(schema: T) =>
   z.preprocess((v) => (v === null ? undefined : v), schema);
 
+const IntentEnum = z.enum([
+  "comparison",
+  "trend",
+  "breakdown",
+  "ranking",
+  "single_value",
+]);
+
+const RecommendedWidgetEnum = z.enum(["bar", "line", "pie", "table", "metric"]);
+
+const QueryIdEnum = z.enum([
+  "metric_total",
+  "sales_by_location",
+  "top_items",
+  "hourly_sales",
+  "daily_sales",
+  "delivery_vs_dinein",
+  "doordash_revenue",
+  "takeout_orders_by_location",
+]);
+
 const PlanSchema = z.object({
   assistant_message: z.string().min(1),
   clarify_question: nullToUndefined(z.string()).optional(),
+
+  // ✅ explicit “agentic” fields
+  intent: nullToUndefined(IntentEnum).optional(),
+  recommended_widget: nullToUndefined(RecommendedWidgetEnum).optional(),
+
   actions: z
     .array(
-      z.object({
-        query_id: z.enum([
-          "sales_by_location",
-          "top_items",
-          "hourly_sales",
-          "daily_sales",
-          "delivery_vs_dinein",
-          "doordash_revenue",
-          "takeout_orders_by_location",
-        ]),
-        title: nullToUndefined(z.string()).optional(),
-        note: nullToUndefined(z.string()).optional(),
-        params: nullToUndefined(
-          z.object({
-            metric: nullToUndefined(z.enum(["sales", "revenue"])).optional(),
-            location: nullToUndefined(z.string()).optional(),
-            locations: nullToUndefined(z.array(z.string()).max(5)).optional(),
-            order_date: nullToUndefined(z.string()).optional(), // ✅ null-safe now
-            limit: nullToUndefined(z.number().int().min(1).max(50)).optional(),
-          })
-        ).optional(),
-      })
+      z
+        .object({
+          // ✅ query_id is optional (LLM can omit it)
+          query_id: nullToUndefined(QueryIdEnum).optional(),
+
+          // ✅ action-level intent/widget (preferred)
+          intent: nullToUndefined(IntentEnum).optional(),
+          recommended_widget: nullToUndefined(RecommendedWidgetEnum).optional(),
+
+          title: nullToUndefined(z.string()).optional(),
+          note: nullToUndefined(z.string()).optional(),
+          params: nullToUndefined(
+            z.object({
+              metric: nullToUndefined(z.enum(["sales", "revenue"])).optional(),
+              location: nullToUndefined(z.string()).optional(),
+              locations: nullToUndefined(z.array(z.string()).max(5)).optional(),
+              order_date: nullToUndefined(z.string()).optional(),
+
+              // ✅ NEW: date range for daily trends
+              start_date: nullToUndefined(z.string()).optional(),
+              end_date: nullToUndefined(z.string()).optional(),
+
+              limit: nullToUndefined(
+                z.number().int().min(1).max(50)
+              ).optional(),
+            })
+          ).optional(),
+        })
+        .refine((a) => !!a.query_id || !!a.recommended_widget, {
+          message: "Each action must include query_id or recommended_widget.",
+        })
     )
     .max(5)
     .default([]),
 });
+
+type PlanAction = z.infer<typeof PlanSchema>["actions"][number];
 
 function safeJsonParse(text: string): unknown {
   try {
@@ -110,50 +161,6 @@ function canonicalISODate(input: unknown): string | null {
 function cleanNote(input: unknown): string | undefined {
   const s = typeof input === "string" ? input.trim() : "";
   return s ? s : undefined;
-}
-
-function classifyChannel(fulfillmentRaw: unknown, sourceRaw: unknown) {
-  const fulfillment = cleanStr(fulfillmentRaw).toLowerCase();
-  const source = cleanStr(sourceRaw).toLowerCase();
-
-  if (source.includes("doordash")) return "Delivery";
-
-  if (
-    fulfillment.includes("delivery") ||
-    fulfillment.includes("pickup") ||
-    fulfillment.includes("takeout") ||
-    fulfillment.includes("to-go") ||
-    fulfillment.includes("togo") ||
-    fulfillment.includes("carryout") ||
-    fulfillment.includes("curbside")
-  ) {
-    return "Delivery";
-  }
-
-  if (
-    fulfillment.includes("dine") ||
-    fulfillment.includes("on_prem") ||
-    fulfillment.includes("on-prem") ||
-    fulfillment.includes("onsite") ||
-    fulfillment.includes("in_store") ||
-    fulfillment.includes("in-store")
-  ) {
-    return "Dine-in";
-  }
-
-  return "Unknown";
-}
-
-function isTakeout(fulfillmentRaw: unknown) {
-  const f = cleanStr(fulfillmentRaw).toLowerCase();
-  return (
-    f.includes("pickup") ||
-    f.includes("takeout") ||
-    f.includes("to-go") ||
-    f.includes("togo") ||
-    f.includes("carryout") ||
-    f.includes("curbside")
-  );
 }
 
 function metricHintFromQuery(userQuery: string): Metric {
@@ -254,13 +261,220 @@ function inferISODateFromUserText(userText: string): string | null {
   return `2025-${md.month}-${md.day}`;
 }
 
+/** -------------------------------
+ * ✅ Relative date helpers (yesterday/today)
+ * ------------------------------*/
+function isoToDate(iso: string): Date | null {
+  const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = Number(m[1]);
+  const mo = Number(m[2]) - 1;
+  const d = Number(m[3]);
+  const dt = new Date(Date.UTC(y, mo, d));
+  return Number.isFinite(dt.getTime()) ? dt : null;
+}
+
+function dateToISO(dt: Date): string {
+  const y = dt.getUTCFullYear();
+  const m = pad2(dt.getUTCMonth() + 1);
+  const d = pad2(dt.getUTCDate());
+  return `${y}-${m}-${d}`;
+}
+
+function addDaysISO(iso: string, deltaDays: number): string | null {
+  const dt = isoToDate(iso);
+  if (!dt) return null;
+  dt.setUTCDate(dt.getUTCDate() + deltaDays);
+  return dateToISO(dt);
+}
+
+function resolveRelativeOrderDate(
+  userQuery: string,
+  maxDate: string | null
+): string | null {
+  const q = userQuery.toLowerCase();
+  if (!maxDate) return null;
+
+  if (q.includes("yesterday")) return addDaysISO(maxDate, -1);
+  if (q.includes("today")) return maxDate;
+
+  return null;
+}
+
+/** -------------------------------
+ * ✅ Graph-like query detection (force line charts)
+ * ------------------------------*/
+function isGraphLikeQuery(q: string) {
+  const t = q.toLowerCase();
+  return (
+    t.includes("graph") ||
+    t.includes("chart") ||
+    t.includes("plot") ||
+    t.includes("trend") ||
+    t.includes("over time") ||
+    t.includes("daily")
+  );
+}
+
+function hasFirstWeekPhrase(q: string) {
+  const t = q.toLowerCase();
+  return t.includes("first week") || t.includes("week 1");
+}
+
+/** -------------------------------
+ * Answer-first summaries helpers
+ * ------------------------------*/
+function dollars(cents: number) {
+  return `$${(cents / 100).toFixed(2)}`;
+}
+
+function formatValue(value: number, valueType: "currency" | "count") {
+  if (valueType === "count") return `${Math.round(value)}`;
+  return dollars(value);
+}
+
+function formatPct(n: number) {
+  if (!Number.isFinite(n)) return "";
+  return `${(n * 100).toFixed(1)}%`;
+}
+
+function sum(values: number[]) {
+  return values.reduce((a, b) => a + b, 0);
+}
+
+function buildAnswerFirstSummaries(widgets: Widget[]): string {
+  const lines: string[] = [];
+
+  for (const w of widgets) {
+    if (w.type === "metric") {
+      lines.push(
+        `• ${w.title}: ${formatValue(w.value, w.value_type)}${
+          w.note ? ` (${w.note})` : ""
+        }.`
+      );
+      continue;
+    }
+
+    const valueType: "currency" | "count" =
+      (w.type === "bar" && (w.value_type ?? "currency")) ||
+      (w.type === "table" && (w.value_type ?? "currency")) ||
+      (w.type === "line" ? "currency" : "currency");
+
+    if (w.type === "bar") {
+      const values = w.data.map((d) => Number(d.sales_cents ?? 0));
+      const total = sum(values);
+      if (total <= 0) continue;
+
+      const top = w.data.reduce((best, cur) =>
+        Number(cur.sales_cents ?? 0) > Number(best.sales_cents ?? 0)
+          ? cur
+          : best
+      );
+
+      const topVal = Number(top.sales_cents ?? 0);
+      const pct = topVal / total;
+
+      lines.push(
+        `• ${w.title}: Total ${formatValue(total, valueType)}. Top: ${
+          top.location_name
+        } (${formatValue(topVal, valueType)}, ${formatPct(pct)}).`
+      );
+      continue;
+    }
+
+    if (w.type === "pie") {
+      const values = w.data.map((d) => Number(d.sales_cents ?? 0));
+      const total = sum(values);
+      if (total <= 0) continue;
+
+      const top = w.data.reduce((best, cur) =>
+        Number(cur.sales_cents ?? 0) > Number(best.sales_cents ?? 0)
+          ? cur
+          : best
+      );
+
+      const topVal = Number(top.sales_cents ?? 0);
+      const pct = topVal / total;
+
+      lines.push(
+        `• ${w.title}: Total ${formatValue(total, "currency")}. Largest: ${
+          top.channel
+        } (${formatValue(topVal, "currency")}, ${formatPct(pct)}).`
+      );
+      continue;
+    }
+
+    if (w.type === "table") {
+      const values = w.data.map((d) => Number(d.sales_cents ?? 0));
+      const total = sum(values);
+      if (total <= 0) continue;
+
+      const top = w.data.reduce((best, cur) =>
+        Number(cur.sales_cents ?? 0) > Number(best.sales_cents ?? 0)
+          ? cur
+          : best
+      );
+
+      const topVal = Number(top.sales_cents ?? 0);
+      const pct = topVal / total;
+
+      const vt: "currency" | "count" = w.value_type ?? "currency";
+
+      lines.push(
+        `• ${w.title}: Total ${formatValue(total, vt)}. Top: ${
+          top.normalized_name
+        } (${formatValue(topVal, vt)}, ${formatPct(pct)}).`
+      );
+      continue;
+    }
+
+    if (w.type === "line") {
+      const values = (w.data as any[]).map((p) => Number(p.sales_cents ?? 0));
+      const total = sum(values);
+      if (total <= 0) continue;
+
+      const topPoint = (w.data as any[]).reduce((best, cur) =>
+        Number(cur.sales_cents ?? 0) > Number(best.sales_cents ?? 0)
+          ? cur
+          : best
+      );
+
+      const topVal = Number(topPoint.sales_cents ?? 0);
+      const pct = topVal / total;
+
+      if ("hour" in topPoint) {
+        const hr = Number(topPoint.hour);
+        const label = Number.isFinite(hr) ? `${hr}:00` : "peak hour";
+        lines.push(
+          `• ${w.title}: Total ${formatValue(
+            total,
+            "currency"
+          )}. Peak: ${label} (${formatValue(topVal, "currency")}, ${formatPct(
+            pct
+          )}).`
+        );
+      } else if ("date" in topPoint) {
+        lines.push(
+          `• ${w.title}: Total ${formatValue(total, "currency")}. Peak: ${
+            topPoint.date
+          } (${formatValue(topVal, "currency")}, ${formatPct(pct)}).`
+        );
+      }
+      continue;
+    }
+  }
+
+  if (!lines.length) return "";
+  return `\n\nSummary\n${lines.join("\n")}`;
+}
+
 async function getKnownLocationsAndRange(): Promise<{
   knownLocations: string[];
   minDate: string | null;
   maxDate: string | null;
 }> {
   const { data, error } = await supabaseServer
-    .from("v_orders")
+    .from(ORDERS_VIEW)
     .select("location, order_date");
 
   if (error) return { knownLocations: [], minDate: null, maxDate: null };
@@ -330,35 +544,52 @@ Data date range available: ${minDate ?? "unknown"} to ${
   } (inclusive).
 
 Date parsing hint:
-- If the user mentions a specific calendar date like "Jan 2nd" and you can map it, use that.
 - Inferred ISO date from the user's text (if any): ${inferredIsoDate ?? "null"}
 
-IMPORTANT VISUALIZATION / ACTION RULES:
-1) If user asks about a SPECIFIC DATE (e.g., "sales for Jan 2nd", "revenue on January 3rd") and they do NOT ask for "daily trend" / "week" / "over time":
-   - Use query_id = "hourly_sales" with params.order_date = that YYYY-MM-DD
-   - This produces a single-day view (hourly line), NOT multiple days.
-2) Use "daily_sales" ONLY when the user explicitly asks for a trend/range ("daily", "first week", "over time", "trend").
-3) "yesterday" means (latest available date - 1 day), within the available range.
-4) If user says "compare A vs B" or "A vs B" and both are locations, set params.locations = ["A","B"] and avoid extra locations.
-5) If user says "orders", interpret as counts (use takeout_orders_by_location).
-6) If user asks for a date outside the available range, ask EXACTLY ONE clarification question and mention the available range.
+✅ AGENTIC OUTPUT (REQUIRED):
+For each action, output:
+- intent: comparison | trend | breakdown | ranking | single_value
+- recommended_widget: bar | line | pie | table | metric
 
-Available query_id actions:
-- sales_by_location: sums sales/revenue grouped by location (params.metric)
-- top_items: top selling items by item sales (order items; metric is always sales)
-- hourly_sales: hourly sales/revenue (optional location, REQUIRED order_date for single-day questions; params.metric)
-- daily_sales: daily sales/revenue trend (optional location; params.metric)
-- delivery_vs_dinein: split by channel (params.metric)
-- doordash_revenue: revenue from DoorDash (uses total_cents)
-- takeout_orders_by_location: count of pickup/takeout orders grouped by location (counts, not dollars)
+You MAY omit query_id. The server will map (intent + recommended_widget + params) to the correct query.
+
+Mapping guidance:
+- recommended_widget=metric => single number total (use metric_total)
+- bar => by-location comparisons/rankings (sales_by_location OR takeout_orders_by_location OR doordash_revenue)
+- line => time trends (hourly_sales when order_date is set; else daily_sales)
+- pie => channel breakdown (delivery_vs_dinein)
+- table => top items (top_items)
+
+✅ REQUIRED BEHAVIOR FOR SINGLE-DAY QUESTIONS (IMPORTANT):
+If the user asks for a SPECIFIC DAY total (examples: "Revenue yesterday", "Sales on Jan 3rd", "Revenue for 2025-01-03"):
+You MUST return TWO actions:
+1) A metric card total:
+   - intent="single_value"
+   - recommended_widget="metric"
+   - include params.order_date=YYYY-MM-DD (resolve "yesterday" to latest-1 day)
+2) An hourly breakdown for the SAME day:
+   - intent="breakdown"
+   - recommended_widget="line"
+   - include params.order_date=YYYY-MM-DD
+
+This applies even if the user only asked for one number. The UI must show BOTH: metric + hourly line.
+
+For daily trend windows (optional):
+- You can include params.start_date and params.end_date (YYYY-MM-DD) when the user asks for a range (e.g., "first week").
+
+If user asks for a date outside available range, ask EXACTLY ONE clarification question and mention the available range.
 
 Return JSON of this exact shape:
 {
   "assistant_message": "short helpful sentence",
   "clarify_question": "optional - ask exactly one question",
+  "intent": "optional top-level intent",
+  "recommended_widget": "optional top-level widget",
   "actions": [
     {
-      "query_id": "...",
+      "intent": "comparison|trend|breakdown|ranking|single_value",
+      "recommended_widget": "bar|line|pie|table|metric",
+      "query_id": "optional",
       "title": "optional widget title",
       "note": "optional note",
       "params": {
@@ -366,6 +597,8 @@ Return JSON of this exact shape:
         "location": "optional location",
         "locations": ["optional","list"],
         "order_date": "optional YYYY-MM-DD",
+        "start_date": "optional YYYY-MM-DD",
+        "end_date": "optional YYYY-MM-DD",
         "limit": 10
       }
     }
@@ -381,8 +614,247 @@ function metricToColumn(metric: Metric) {
   return metric === "revenue" ? "total_cents" : "item_sales_cents";
 }
 
+/** -------------------------------
+ * ✅ map (intent + recommended_widget) -> query_id
+ * ------------------------------*/
+function expectedWidgetFromQueryId(
+  queryId: z.infer<typeof QueryIdEnum>
+): z.infer<typeof RecommendedWidgetEnum> {
+  switch (queryId) {
+    case "metric_total":
+      return "metric";
+    case "sales_by_location":
+    case "doordash_revenue":
+    case "takeout_orders_by_location":
+      return "bar";
+    case "top_items":
+      return "table";
+    case "hourly_sales":
+    case "daily_sales":
+      return "line";
+    case "delivery_vs_dinein":
+      return "pie";
+    default:
+      return "bar";
+  }
+}
+
+function inferQueryIdFromRecommendation(args: {
+  userQuery: string;
+  action: PlanAction;
+}): z.infer<typeof QueryIdEnum> {
+  const q = args.userQuery.toLowerCase();
+  const rw = args.action.recommended_widget;
+  const intent = args.action.intent;
+  const params = args.action.params ?? {};
+  const hasOrderDate = !!canonicalISODate(params.order_date);
+
+  const mentionsDoorDash = q.includes("doordash");
+  const mentionsTakeout =
+    q.includes("takeout") || q.includes("pickup") || q.includes("pick up");
+  const mentionsOrders = q.includes("orders");
+
+  if (rw === "metric") return "metric_total";
+  if (rw === "pie") return "delivery_vs_dinein";
+  if (rw === "table") return "top_items";
+
+  if (rw === "line") {
+    if (hasOrderDate) return "hourly_sales";
+    return "daily_sales";
+  }
+
+  if (mentionsDoorDash) return "doordash_revenue";
+  if (mentionsOrders || mentionsTakeout) return "takeout_orders_by_location";
+
+  if (intent === "ranking" || intent === "comparison" || intent === "breakdown")
+    return "sales_by_location";
+
+  return "sales_by_location";
+}
+
+function normalizeAction(args: {
+  userQuery: string;
+  action: PlanAction;
+  minDate?: string | null; // ✅ allow using dataset minDate for "first week"
+}): PlanAction & {
+  query_id: z.infer<typeof QueryIdEnum>;
+  recommended_widget?: z.infer<typeof RecommendedWidgetEnum>;
+} {
+  const { userQuery } = args;
+  let a: PlanAction = args.action;
+
+  // ✅ If user explicitly asked for a graph/chart/plot/trend, force line chart behavior
+  const wantsGraph = isGraphLikeQuery(userQuery);
+  if (wantsGraph) {
+    a = {
+      ...a,
+      intent: a.intent ?? "trend",
+      recommended_widget: "line",
+    };
+
+    // ✅ If they said "first week", auto-scope to first 7 days of dataset (minDate..minDate+6)
+    if (hasFirstWeekPhrase(userQuery) && args.minDate) {
+      const p = a.params ?? {};
+      const hasStart = canonicalISODate((p as any).start_date);
+      const hasEnd = canonicalISODate((p as any).end_date);
+
+      if (!hasStart || !hasEnd) {
+        const end = addDaysISO(args.minDate, 6);
+        a = {
+          ...a,
+          params: {
+            ...(p ?? {}),
+            start_date: args.minDate,
+            ...(end ? { end_date: end } : {}),
+          },
+        };
+      }
+    }
+  }
+
+  const query_id =
+    a.query_id ??
+    inferQueryIdFromRecommendation({ userQuery: args.userQuery, action: a });
+
+  const expected = expectedWidgetFromQueryId(query_id);
+  const recommended_widget = a.recommended_widget ?? expected;
+  const fixedRecommended =
+    recommended_widget !== expected ? expected : recommended_widget;
+
+  return {
+    ...a,
+    query_id,
+    recommended_widget: fixedRecommended,
+  };
+}
+
+/** -------------------------------
+ * ✅ Safety net: enforce Metric + Hourly pair for single-day totals
+ * ------------------------------*/
+function normalizeLocList(xs: unknown): string[] {
+  return Array.isArray(xs)
+    ? xs
+        .map(cleanStr)
+        .filter(Boolean)
+        .map((s) => s.toLowerCase())
+    : [];
+}
+
+function sameScope(a: any, b: any) {
+  const ap = a?.params ?? {};
+  const bp = b?.params ?? {};
+
+  const aDate = canonicalISODate(ap.order_date);
+  const bDate = canonicalISODate(bp.order_date);
+
+  const aLoc = cleanStr(ap.location || "").toLowerCase();
+  const bLoc = cleanStr(bp.location || "").toLowerCase();
+
+  const aLocs = normalizeLocList(ap.locations);
+  const bLocs = normalizeLocList(bp.locations);
+
+  const locsEq =
+    aLocs.length === bLocs.length &&
+    aLocs.every((x, i) => x === (bLocs[i] ?? ""));
+
+  return aDate === bDate && aLoc === bLoc && locsEq;
+}
+
+function applyRelativeDatesToAction(
+  action: PlanAction,
+  userQuery: string,
+  maxDate: string | null
+): PlanAction {
+  const rel = resolveRelativeOrderDate(userQuery, maxDate);
+  if (!rel) return action;
+
+  const p = action.params ?? {};
+  const has = canonicalISODate(p.order_date);
+  if (has) return action;
+
+  return {
+    ...action,
+    params: {
+      ...p,
+      order_date: rel,
+    },
+  };
+}
+
+function ensureMetricAndHourlyPair(args: {
+  userQuery: string;
+  maxDate: string | null;
+  actions: PlanAction[];
+}): PlanAction[] {
+  const { userQuery, maxDate } = args;
+
+  // First: fill relative dates (yesterday/today) if missing.
+  const seeded = args.actions.map((a) =>
+    applyRelativeDatesToAction(a, userQuery, maxDate)
+  );
+
+  const out: PlanAction[] = [...seeded];
+
+  // 1) If there is metric_total with order_date, ensure hourly exists for same scope
+  for (const raw of seeded) {
+    const a = normalizeAction({ userQuery, action: raw });
+
+    if (a.query_id !== "metric_total") continue;
+    const d = canonicalISODate(a.params?.order_date);
+    if (!d) continue;
+
+    const hasHourly = out.some((x) => {
+      const nx = normalizeAction({ userQuery, action: x });
+      return nx.query_id === "hourly_sales" && sameScope(nx, a);
+    });
+
+    if (!hasHourly) {
+      out.push({
+        intent: "breakdown",
+        recommended_widget: "line",
+        title: a.title ? `Hourly breakdown — ${a.title}` : undefined,
+        note: undefined,
+        params: {
+          ...(a.params ?? {}),
+          order_date: d,
+        },
+      });
+    }
+  }
+
+  // 2) If there is hourly_sales with order_date, ensure metric_total exists for same scope
+  for (const raw of seeded) {
+    const a = normalizeAction({ userQuery, action: raw });
+
+    if (a.query_id !== "hourly_sales") continue;
+    const d = canonicalISODate(a.params?.order_date);
+    if (!d) continue;
+
+    const hasMetric = out.some((x) => {
+      const nx = normalizeAction({ userQuery, action: x });
+      return nx.query_id === "metric_total" && sameScope(nx, a);
+    });
+
+    if (!hasMetric) {
+      out.unshift({
+        // put metric first so it renders above line after slicing
+        intent: "single_value",
+        recommended_widget: "metric",
+        title: a.title ? a.title.replace(/^Hourly\s+/i, "") : undefined,
+        note: undefined,
+        params: {
+          ...(a.params ?? {}),
+          order_date: d,
+        },
+      });
+    }
+  }
+
+  return out;
+}
+
 async function runAction(
-  action: z.infer<typeof PlanSchema>["actions"][number],
+  action: PlanAction & { query_id: z.infer<typeof QueryIdEnum> },
   knownLocations: string[],
   metricHint: Metric,
   minDate: string | null,
@@ -428,8 +900,46 @@ async function runAction(
     }
   }
 
+  if (queryId === "metric_total") {
+    let q = supabaseServer
+      .from(ORDERS_VIEW)
+      .select(`location, order_date, ${metricCol}`);
+
+    if (locFilterSingle) q = q.eq("location", locFilterSingle);
+    if (locFilterList.length) q = q.in("location", locFilterList);
+    if (order_date) q = q.eq("order_date", order_date);
+
+    const { data, error } = await q;
+    if (error) throw new Error(error.message);
+
+    let total = 0;
+    for (const r of (data ?? []) as any[]) {
+      total += Number(r[metricCol] ?? 0);
+    }
+
+    const metricLabel = metric === "revenue" ? "Revenue" : "Sales";
+    const scope = locFilterList.length
+      ? ` — ${locFilterList.join(" vs ")}`
+      : locFilterSingle
+      ? ` — ${locFilterSingle}`
+      : "";
+
+    return {
+      id: `metric_total:${metric}:${order_date ?? "all"}:${
+        locFilterList.join("|") || locFilterSingle || "all"
+      }`,
+      type: "metric",
+      title:
+        action.title ??
+        `${metricLabel}${scope}${order_date ? ` (${order_date})` : ""}`,
+      value: total,
+      value_type: "currency",
+      note,
+    };
+  }
+
   if (queryId === "sales_by_location") {
-    let q = supabaseServer.from("v_orders").select(`location, ${metricCol}`);
+    let q = supabaseServer.from(ORDERS_VIEW).select(`location, ${metricCol}`);
 
     if (locFilterSingle) q = q.eq("location", locFilterSingle);
     if (locFilterList.length) q = q.in("location", locFilterList);
@@ -500,7 +1010,7 @@ async function runAction(
 
   if (queryId === "hourly_sales") {
     let q = supabaseServer
-      .from("v_orders")
+      .from(ORDERS_VIEW)
       .select(`order_hour, location, order_date, ${metricCol}`);
 
     if (locFilterSingle) q = q.eq("location", locFilterSingle);
@@ -545,11 +1055,33 @@ async function runAction(
 
   if (queryId === "daily_sales") {
     let q = supabaseServer
-      .from("v_orders")
+      .from(ORDERS_VIEW)
       .select(`order_date, location, ${metricCol}`);
 
     if (locFilterSingle) q = q.eq("location", locFilterSingle);
     if (locFilterList.length) q = q.in("location", locFilterList);
+
+    // ✅ Optional range filters
+    const start_date = canonicalISODate((params as any).start_date);
+    const end_date = canonicalISODate((params as any).end_date);
+
+    if (start_date && minDate && maxDate) {
+      if (start_date < minDate || start_date > maxDate) {
+        throw new Error(
+          `Start date ${start_date} is outside the available range (${minDate} to ${maxDate}).`
+        );
+      }
+    }
+    if (end_date && minDate && maxDate) {
+      if (end_date < minDate || end_date > maxDate) {
+        throw new Error(
+          `End date ${end_date} is outside the available range (${minDate} to ${maxDate}).`
+        );
+      }
+    }
+
+    if (start_date) q = q.gte("order_date", start_date);
+    if (end_date) q = q.lte("order_date", end_date);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
@@ -573,11 +1105,14 @@ async function runAction(
       ? ` — ${locFilterSingle}`
       : "";
 
+    const rangeLabel =
+      start_date && end_date ? ` (${start_date} → ${end_date})` : "";
+
     return {
       id: `daily_sales:${metric}:${
         locFilterList.join("|") || locFilterSingle || "all"
-      }`,
-      title: action.title ?? `Daily ${metricLabel}${scope}`,
+      }:${start_date ?? "all"}:${end_date ?? "all"}`,
+      title: action.title ?? `Daily ${metricLabel}${scope}${rangeLabel}`,
       note,
       type: "line",
       data: series,
@@ -586,8 +1121,8 @@ async function runAction(
 
   if (queryId === "delivery_vs_dinein") {
     let q = supabaseServer
-      .from("v_orders")
-      .select(`location, order_date, fulfillment, source, ${metricCol}`);
+      .from(ORDERS_VIEW)
+      .select(`location, order_date, channel, ${metricCol}`);
 
     if (locFilterSingle) q = q.eq("location", locFilterSingle);
     if (locFilterList.length) q = q.in("location", locFilterList);
@@ -602,9 +1137,10 @@ async function runAction(
 
     for (const r of (data ?? []) as any[]) {
       const cents = Number(r[metricCol] ?? 0);
-      const channel = classifyChannel(r.fulfillment, r.source);
-      if (channel === "Delivery") delivery += cents;
-      else if (channel === "Dine-in") dinein += cents;
+      const ch = cleanStr(r.channel);
+
+      if (ch === "Delivery") delivery += cents;
+      else if (ch === "Dine-in") dinein += cents;
       else unknown += cents;
     }
 
@@ -647,14 +1183,14 @@ async function runAction(
 
   if (queryId === "doordash_revenue") {
     let q = supabaseServer
-      .from("v_orders")
-      .select("location, order_date, total_cents, source");
+      .from(ORDERS_VIEW)
+      .select("location, order_date, total_cents, is_doordash");
 
     if (locFilterSingle) q = q.eq("location", locFilterSingle);
     if (locFilterList.length) q = q.in("location", locFilterList);
     if (order_date) q = q.eq("order_date", order_date);
 
-    q = q.ilike("source", "%DOORDASH%");
+    q = q.eq("is_doordash", true);
 
     const { data, error } = await q;
     if (error) throw new Error(error.message);
@@ -683,7 +1219,10 @@ async function runAction(
   }
 
   if (queryId === "takeout_orders_by_location") {
-    let q = supabaseServer.from("v_orders").select("location, fulfillment");
+    let q = supabaseServer
+      .from(ORDERS_VIEW)
+      .select("location, order_date, is_takeout");
+
     if (order_date) q = q.eq("order_date", order_date);
 
     const { data, error } = await q;
@@ -691,7 +1230,7 @@ async function runAction(
 
     const counts = new Map<string, number>();
     for (const r of (data ?? []) as any[]) {
-      if (!isTakeout(r.fulfillment)) continue;
+      if (!r.is_takeout) continue;
       const loc = cleanStr(r.location) || "Unknown";
       counts.set(loc, (counts.get(loc) ?? 0) + 1);
     }
@@ -711,7 +1250,7 @@ async function runAction(
         `Takeout Orders by Location${order_date ? ` (${order_date})` : ""}`,
       note: notes.join(" "),
       type: "bar",
-      value_type: "count", // ✅ key fix
+      value_type: "count",
       data: result,
     };
   }
@@ -823,11 +1362,19 @@ export async function POST(req: Request) {
       }
     }
 
-    // ✅ only run up to 3 widgets
+    // ✅ Enforce metric + hourly line pair for single-day totals (and fill "yesterday")
+    plan.actions = ensureMetricAndHourlyPair({
+      userQuery,
+      maxDate,
+      actions: plan.actions,
+    });
+
+    // ✅ only run up to 3 widgets (metric + line fits)
     const actionsToRun = plan.actions.slice(0, 3);
 
     const widgets: Widget[] = [];
-    for (const action of actionsToRun) {
+    for (const raw of actionsToRun) {
+      const action = normalizeAction({ userQuery, action: raw, minDate });
       const w = await runAction(
         action,
         knownLocations,
@@ -838,9 +1385,11 @@ export async function POST(req: Request) {
       widgets.push(w);
     }
 
+    const summary = buildAnswerFirstSummaries(widgets);
+
     return NextResponse.json({
       ok: true,
-      assistant_message: plan.assistant_message,
+      assistant_message: `${plan.assistant_message}${summary}`,
       widgets,
     });
   } catch (err: any) {
