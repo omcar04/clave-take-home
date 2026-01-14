@@ -1,112 +1,174 @@
-Natural Language Dashboard Generator
-Clave Engineering Take-Home Assessment
+# Natural Language Dashboard Generator
 
-A natural language analytics platform for restaurant data. This system ingests fragmented, "messy" data from multiple POS and delivery providers, normalizes it into a canonical schema, and provides a GPT-powered interface for querying insights.
-🚀 Setup & Installation
+## Clave Engineering Take-Home Assessment
 
-1. Prerequisites
+A natural language analytics platform for restaurant data. This system ingests fragmented, **messy data** from multiple POS and delivery providers, normalizes it into a **canonical schema**, and provides a **GPT-powered interface** for querying insights and generating dashboards.
 
-   Node.js (v18+)
+---
 
-   Python 3.9+ (for data ingestion)
+## ✨ What this does
 
-   Supabase Account (PostgreSQL + Auth)
+- Ingests data from multiple sources (POS + delivery providers)
+- Normalizes raw JSON into a consistent Postgres schema
+- Exposes “Gold Layer” analytics views for clean querying
+- Uses a LangGraph-based agent to convert natural language → structured “widget” outputs
+- Renders widgets dynamically in a Next.js UI (charts, tables, metric cards)
 
-   OpenAI API Key (for the LangGraph agent)
+---
 
-2. Database Setup (Supabase)
+## 🚀 Setup & Installation
 
-   Create a new Supabase project.
+### 1) Prerequisites
 
-   Run the contents of schema.sql in the Supabase SQL Editor to create base tables (locations, orders, order_items).
+- **Node.js** v18+
+- **Python** 3.9+ (for data ingestion)
+- **Supabase** account (Postgres + Auth)
+- **OpenAI API Key** (for the LangGraph agent)
 
-   Run the contents of views.sql to create the "Gold Layer" analytics views (v_orders_enriched, v_order_items_derived).
+---
 
-   Apply the following indexes for performance:
-   SQL
+### 2) Database Setup (Supabase)
 
-   CREATE INDEX idx_orders_location_time ON orders (location_id, ordered_at);
-   CREATE INDEX idx_order_items_order ON order_items (order_id);
-   CREATE INDEX idx_order_items_norm_name ON order_items (normalized_name);
+1. Create a new Supabase project.
+2. Run the contents of `schema.sql` in the Supabase SQL Editor to create base tables:
+   - `locations`
+   - `orders`
+   - `order_items`
+3. Run the contents of `views.sql` to create the “Gold Layer” analytics views:
+   - `v_orders_enriched`
+   - `v_order_items_derived`
+4. Apply the following indexes for performance:
 
-3. Environment Variables
+```sql
+CREATE INDEX idx_orders_location_time ON orders (location_id, ordered_at);
+CREATE INDEX idx_order_items_order ON order_items (order_id);
+CREATE INDEX idx_order_items_norm_name ON order_items (normalized_name);
+```
 
-Create a .env file in the root directory:
-Code snippet
+---
 
+### 3) Environment Variables
+
+Create a `.env` file in the project root:
+
+```bash
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key
 OPENAI_API_KEY=your_openai_key
+```
 
-4. Data Ingestion
+---
 
-Install Python dependencies and run the ingestion scripts to populate your database:
-Bash
+### 4) Data Ingestion
 
+Install Python dependencies and run ingestion scripts to populate the database:
+
+```bash
 pip install -r requirements.txt
 python ingest_toast.py
 python ingest_doordash.py
 python ingest_square.py
+```
 
-📊 Database Schema & Data Normalization
-Schema Design
+---
+
+## 📊 Database Schema & Data Normalization
+
+### Schema Design
 
 The architecture uses a normalized Postgres schema designed for high-performance aggregations.
-Cleaning & Normalization Approach
 
-    Deduplication: Uses a stable source key (source, source_order_id) to ensure idempotent re-runs.
+### Cleaning & Normalization Approach
 
-    Monetary Precision: All currency is stored as integer cents (bigint) to avoid floating-point rounding errors.
+- **Deduplication / Idempotency**  
+  Uses a stable source key `(source, source_order_id)` to ensure ingestion can be re-run safely without creating duplicates.
 
-        item_sales_cents: Net sales (pre-tax/tip).
+- **Monetary Precision**  
+  All currency is stored as integer cents (`bigint`) to avoid floating-point rounding errors:
 
-        total_cents: Gross revenue (includes tax, tip, fees).
+  - `item_sales_cents`: Net sales (pre-tax/tip)
+  - `total_cents`: Gross revenue (includes tax, tip, fees)
 
-    Text Normalization: Centralized in normalize.py. It strips emojis, collapses whitespace, and standardizes casing for both item names and categories.
+- **Text Normalization**  
+  Centralized in `normalize.py`:
 
-    Canonical Categories: Maps disparate source categories into four predictable buckets: Beverages, Food, Desserts, and Entrees (default).
+  - strips emojis
+  - collapses whitespace
+  - standardizes casing for item names and categories
 
-🤖 AI Query Parsing & Logic
+- **Canonical Categories**  
+  Maps disparate source categories into predictable buckets:
+  - `Beverages`
+  - `Food`
+  - `Desserts`
+  - `Entrees` (default)
 
-The dashboard uses a LangGraph-based Agentic Workflow to translate natural language into structured data visualizations.
-The Agent Pipeline
+---
 
-    Planner (GPT-4o-mini): Analyzes the user query against known locations and dates. It outputs a Plan (JSON) containing one or more actions.
+## 🤖 AI Query Parsing & Visualization Logic
 
-    Executor: Validates the plan and performs the "Truth Layer" logic.
+The dashboard uses a **LangGraph-based Agentic Workflow** to translate natural language into structured data visualizations.
 
-        Self-Correction: If a user asks for a single day, the executor automatically injects an hourly breakdown even if the LLM missed it.
+### Agent Pipeline
 
-        Deterministic Routing: Common queries (like "DoorDash totals") bypass the LLM for speed and 100% accuracy.
+1. **Planner (GPT-4o-mini)**  
+   Analyzes the user query against known locations and dates. Outputs a `Plan` (JSON) containing one or more actions.
 
-    Output: Returns a union of widgets (Bar, Line, Pie, Metric, AOV, or Table).
+2. **Executor (Truth Layer)**  
+   Validates the plan and executes deterministic logic:
 
-UI Rendering
+   - **Self-correction:** If the user asks for a single day, the executor injects an hourly breakdown even if the LLM missed it.
+   - **Deterministic routing:** Common queries (e.g., “DoorDash totals”) bypass the LLM for speed and accuracy.
 
-The frontend (Next.js) dynamically renders components based on the widget type:
+3. **Output**  
+   Returns a union of widgets:
+   - `Bar`
+   - `Line`
+   - `Pie`
+   - `Metric`
+   - `AOV`
+   - `Table`
 
-    Metric Cards: For big-picture numbers.
+---
 
-    AOV Charts: Specialized logic for Average Order Value by location.
+## 🧩 UI Rendering
 
-    Summary Block: An "answer-first" text summary generated by the executor to highlight peaks and totals.
+The frontend (Next.js) dynamically renders components based on widget type:
 
-🧠 Design Decisions & Tradeoffs
+- **Metric Cards**: Big-picture numbers
+- **AOV Charts**: Specialized logic for Average Order Value by location
+- **Summary Block**: “Answer-first” text summary generated by the executor to highlight peaks and totals
 
-    View-Based Analytics: I chose to use Postgres Views as a "Gold Layer." This keeps the application logic simple; the LLM queries a clean view rather than performing complex multi-table joins.
+---
 
-    Integer Math: Storing cents instead of decimals is a non-negotiable decision for financial integrity in restaurant tech.
+## 🧠 Design Decisions & Tradeoffs
 
-    LangGraph over Simple Chains: Using a graph allows for future expansion (like multi-step reasoning or clarification loops) which a simple prompt-to-SQL chain lacks.
+- **View-Based Analytics (Gold Layer)**  
+  Postgres Views keep application logic simple; the LLM queries clean views rather than building complex joins in prompts.
 
-    Safe JSON Parsing: Implemented a fallback parser for the LLM to handle cases where the model wraps JSON in markdown blocks.
+- **Integer Math for Money**  
+  Storing cents instead of decimals is non-negotiable for financial correctness in restaurant analytics.
 
-🛠 Future Improvements
+- **LangGraph over Simple Chains**  
+  A graph supports future expansion (multi-step reasoning, clarifying questions, tool routing) better than a single prompt-to-SQL chain.
 
-    Caching Layer: Implement Redis caching for common aggregate queries to reduce Supabase/LLM hits.
+- **Safe JSON Parsing**  
+  Includes a fallback parser for cases where the model wraps JSON in markdown code blocks.
 
-    SQL Generation: Move from a fixed "Action" executor to a controlled Text-to-SQL approach for more "ad-hoc" flexibility.
+---
 
-    Enhanced Item Mapping: Use fuzzy matching or LLM-based clustering to group similar items (e.g., "Coke" and "Coca-Cola") more accurately.
+## 🛠 Future Improvements
 
-    Multi-Turn Memory: Enhance the agent's ability to remember context across more than two turns of conversation.
+- **Caching Layer**  
+  Add Redis caching for common aggregate queries to reduce Supabase + LLM calls.
+
+- **Controlled Text-to-SQL**  
+  Move from fixed “Action” execution to constrained SQL generation for more ad-hoc flexibility.
+
+- **Enhanced Item Mapping**  
+  Use fuzzy matching or clustering to group similar items (e.g., “Coke” and “Coca-Cola”) more accurately.
+
+- **Multi-Turn Memory**  
+  Improve the agent’s ability to retain context across more than two conversation turns.
+
+---
