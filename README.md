@@ -6,6 +6,12 @@ A natural language analytics platform for restaurant data. This system ingests f
 
 ---
 
+## Live Demo
+
+https://clave-take-home-five.vercel.app/
+
+---
+
 ## ✨ What this does
 
 - Ingests data from multiple sources (POS + delivery providers)
