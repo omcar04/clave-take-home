@@ -15,6 +15,9 @@ function dollars(cents: number) {
   return `$${(cents / 100).toFixed(2)}`;
 }
 
+// ✅ simple palette (you can tweak these)
+const COLORS = ["#4F46E5", "#22C55E", "#F59E0B", "#EF4444", "#06B6D4"];
+
 export default function ChannelRevenueChart({ data }: { data: Row[] }) {
   const chartData = (data ?? []).map((d) => ({
     ...d,
@@ -34,7 +37,7 @@ export default function ChannelRevenueChart({ data }: { data: Row[] }) {
             paddingAngle={2}
           >
             {chartData.map((_, idx) => (
-              <Cell key={idx} />
+              <Cell key={idx} fill={COLORS[idx % COLORS.length]} />
             ))}
           </Pie>
 

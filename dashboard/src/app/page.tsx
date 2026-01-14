@@ -1,10 +1,10 @@
-// ✅ MODIFIED FILE: app/page.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import SalesByLocationChart from "@/components/SalesByLocationChart";
-import HourlySalesChart from "@/components/HourlySalesChart";
 import ChannelRevenueChart from "@/components/ChannelRevenueChart";
+import LineSeriesChart from "@/components/LineSeriesChart";
+import AOVByLocationChart from "@/components/AOVByLocationChart"; // ✅ ADD
 import Image from "next/image";
 
 type BarWidget = {
@@ -43,7 +43,6 @@ type PieWidget = {
   data: { channel: string; sales_cents: number }[];
 };
 
-// ✅ NEW metric widget
 type MetricWidget = {
   id: string;
   type: "metric";
@@ -53,13 +52,30 @@ type MetricWidget = {
   note?: string;
 };
 
-type Widget = BarWidget | TableWidget | LineWidget | PieWidget | MetricWidget;
+// ✅ ADD: AOV widget type (matches backend)
+type AOVWidget = {
+  id: string;
+  title: string;
+  note?: string;
+  type: "aov";
+  data: { location_name: string; value_cents: number; orders_count: number }[];
+};
+
+// ✅ include AOVWidget in union
+type Widget =
+  | BarWidget
+  | TableWidget
+  | LineWidget
+  | PieWidget
+  | MetricWidget
+  | AOVWidget;
 
 type ChatTurn = {
   id: string;
   role: "user" | "assistant";
   text: string;
   widgets?: Widget[];
+  trace?: any; // debug trace (optional)
 };
 
 type AgentResponse = {
@@ -68,6 +84,7 @@ type AgentResponse = {
   assistant_message?: string;
   clarify_question?: string | null;
   widgets?: Widget[];
+  trace?: any; // debug trace (optional)
 };
 
 function uid(prefix = "t") {
@@ -114,6 +131,8 @@ export default function Page() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
+  const [debug, setDebug] = useState(true);
+
   const [clarifyState, setClarifyState] = useState<{
     originalQuery: string;
     question: string;
@@ -141,7 +160,8 @@ export default function Page() {
     "top items at Mall",
     "daily revenue for first week",
     "how much came from DoorDash",
-    "revenue on Jan 3rd", // ✅ nice demo
+    "revenue on Jan 3rd",
+    "aov by location", // ✅ add suggestion
   ];
 
   function clearChat() {
@@ -167,8 +187,12 @@ export default function Page() {
 
     try {
       const payload = clarifyState
-        ? { query: clarifyState.originalQuery, clarification: trimmed }
-        : { query: trimmed };
+        ? {
+            query: clarifyState.originalQuery,
+            clarification: trimmed,
+            debug,
+          }
+        : { query: trimmed, debug };
 
       const res = await fetch("/api/agent", {
         method: "POST",
@@ -196,6 +220,7 @@ export default function Page() {
           role: "assistant",
           text: assistantText,
           widgets: widgets.length ? widgets : undefined,
+          trace: json.trace,
         },
       ]);
 
@@ -241,13 +266,15 @@ export default function Page() {
             <span>CLAVE</span>
           </div>
 
-          <button
-            type="button"
-            onClick={clearChat}
-            className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold hover:bg-black/5"
-          >
-            Clear
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={clearChat}
+              className="rounded-full border border-black/10 bg-white px-4 py-2 text-sm font-semibold hover:bg-black/5"
+            >
+              Clear
+            </button>
+          </div>
         </div>
       </header>
 
@@ -325,7 +352,6 @@ export default function Page() {
                         ) : null}
 
                         <div className="mt-3">
-                          {/* ✅ NEW: metric card rendering */}
                           {w.type === "metric" ? (
                             <div className="rounded-2xl border border-black/10 bg-white p-4">
                               <div className="text-3xl font-extrabold tracking-tight">
@@ -337,6 +363,12 @@ export default function Page() {
                                   : "Count"}
                               </div>
                             </div>
+                          ) : w.type === "aov" ? (
+                            // ✅ IMPORTANT: handle AOV BEFORE fallback table
+                            <AOVByLocationChart
+                              data={w.data}
+                              valueLabel="AOV"
+                            />
                           ) : w.type === "bar" ? (
                             <SalesByLocationChart
                               data={w.data}
@@ -353,9 +385,9 @@ export default function Page() {
 
                                     const peakLabel =
                                       peak && "hour" in peak
-                                        ? `${peak.hour}:00`
+                                        ? `${(peak as any).hour}:00`
                                         : peak && "date" in peak
-                                        ? String(peak.date)
+                                        ? String((peak as any).date)
                                         : "";
 
                                     return (
@@ -374,7 +406,9 @@ export default function Page() {
                                             </span>{" "}
                                             {peakLabel} (
                                             {dollars(
-                                              Number(peak.sales_cents ?? 0)
+                                              Number(
+                                                (peak as any).sales_cents ?? 0
+                                              )
                                             )}
                                             )
                                           </div>
@@ -385,7 +419,7 @@ export default function Page() {
                                 </div>
                               ) : null}
 
-                              <HourlySalesChart data={w.data as any} />
+                              <LineSeriesChart data={w.data as any} />
                             </>
                           ) : w.type === "pie" ? (
                             <ChannelRevenueChart data={w.data} />

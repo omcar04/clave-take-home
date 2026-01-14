@@ -30,13 +30,24 @@ function formatDollarsTooltipFromCents(cents: number) {
   });
 }
 
-export default function SalesByLocationChart({ data }: { data: Row[] }) {
-  const maxVal = Math.max(0, ...data.map((d) => Number(d.sales_cents ?? 0)));
-  const treatAsCount = maxVal <= 500; // takeout counts, etc.
+export default function SalesByLocationChart({
+  data,
+  valueType,
+}: {
+  data: Row[];
+  valueType?: "currency" | "count";
+}) {
+  // If caller explicitly says "count", treat as count.
+  // Otherwise keep your heuristic (helps when older widgets don't send value_type).
+  const maxVal = Math.max(
+    0,
+    ...(data ?? []).map((d) => Number(d.sales_cents ?? 0))
+  );
+  const treatAsCount = valueType === "count" ? true : maxVal <= 500;
 
-  const chartData = data.map((d) => ({
+  const chartData = (data ?? []).map((d) => ({
     ...d,
-    value: treatAsCount ? d.sales_cents : d.sales_cents, // keep cents as-is; formatting handles display
+    value: d.sales_cents, // keep cents/counts as-is; formatting controls display
   }));
 
   return (

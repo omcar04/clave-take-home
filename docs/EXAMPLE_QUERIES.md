@@ -5,7 +5,7 @@ These are examples of the types of queries your system should be able to handle.
 ## Basic Queries (Start Here)
 
 - "Show me total sales by location"
-- "What was the revenue yesterday?"\*
+- "What was the revenue yesterday?"
 - "List the top 10 selling items"
 
 ## Comparison Queries
@@ -23,7 +23,7 @@ These are examples of the types of queries your system should be able to handle.
 ## Product Analysis
 
 - "What are the top selling items at the Mall?"
-- "Show me beverage sales across all locations"\*
+- "Show me beverage sales across all locations"
 - "Which category generates the most revenue?"
 
 ## Channel Analysis
@@ -34,10 +34,10 @@ These are examples of the types of queries your system should be able to handle.
 
 ## Advanced Queries (Stretch Goals)
 
-- "Show me peak hours for each location"\*
+- "Show me peak hours for each location"
 - "What's the average order value by channel?"
-- "Graph the trend of delivery orders over time"\*
-- "Which payment methods are most popular?"\*
+- "Graph the trend of delivery orders over time"
+- "Which payment methods are most popular?"
 
 ---
 
