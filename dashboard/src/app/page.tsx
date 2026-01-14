@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import SalesByLocationChart from "@/components/SalesByLocationChart";
 import ChannelRevenueChart from "@/components/ChannelRevenueChart";
 import LineSeriesChart from "@/components/LineSeriesChart";
-import AOVByLocationChart from "@/components/AOVByLocationChart"; // ✅ ADD
+import AOVByLocationChart from "@/components/AOVByLocationChart";
 import Image from "next/image";
 
 type BarWidget = {

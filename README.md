@@ -1,193 +1,112 @@
-# Clave Engineering Take-Home Assessment
+Natural Language Dashboard Generator
+Clave Engineering Take-Home Assessment
 
-## Natural Language Dashboard Generator
+A natural language analytics platform for restaurant data. This system ingests fragmented, "messy" data from multiple POS and delivery providers, normalizes it into a canonical schema, and provides a GPT-powered interface for querying insights.
+🚀 Setup & Installation
 
-### Overview
+1. Prerequisites
 
-At Clave, we consolidate restaurant data from multiple sources (POS systems, delivery platforms, etc.) and transform it into actionable insights powered by AI. Your challenge is to build a mini version of this: **a natural language dashboard for restaurant analytics.**
+   Node.js (v18+)
 
-### The Challenge
+   Python 3.9+ (for data ingestion)
 
-Build a web application where a restaurant owner can type requests like:
-- "Show me sales comparison between Downtown and Airport locations"
-- "What were my top 5 selling products last week?"
-- "Graph hourly sales for Friday vs Saturday at all stores"
-- "Compare delivery vs dine-in revenue this month"
+   Supabase Account (PostgreSQL + Auth)
 
-**...and the system generates the appropriate visualization dynamically.**
+   OpenAI API Key (for the LangGraph agent)
 
-**Key Challenge**: You have 6 messy JSON files with different schemas. Clean them up, normalize them into a unified format, then build the AI-powered dashboard on top.
+2. Database Setup (Supabase)
 
----
+   Create a new Supabase project.
 
-## What We Provide
+   Run the contents of schema.sql in the Supabase SQL Editor to create base tables (locations, orders, order_items).
 
-Ready-to-use data in `/data/sources/` - representing 3 different restaurant data sources:
+   Run the contents of views.sql to create the "Gold Layer" analytics views (v_orders_enriched, v_order_items_derived).
 
-| Source | Files | What It Contains |
-|--------|-------|------------------|
-| **Toast POS** | `toast_pos_export.json` | Orders with checks, payments, menu items |
-| **DoorDash** | `doordash_orders.json` | Delivery/pickup orders with items and fees |
-| **Square POS** | `square/catalog.json`, `square/orders.json`, `square/payments.json`, `square/locations.json` | Split across multiple files like the real API |
+   Apply the following indexes for performance:
+   SQL
 
-All data covers **4 restaurant locations** (Downtown, Airport, Mall, University) from **January 1-4, 2025**.
+   CREATE INDEX idx_orders_location_time ON orders (location_id, ordered_at);
+   CREATE INDEX idx_order_items_order ON order_items (order_id);
+   CREATE INDEX idx_order_items_norm_name ON order_items (normalized_name);
 
-⚠️ **The data is intentionally messy!** You'll find:
-- Inconsistent product names across locations (e.g., "Hash Browns" vs "Hashbrowns")
-- Typos in item names (e.g., "Griled Chiken", "expresso", "coffe")
-- Categories with/without emojis (e.g., "🍔 Burgers" vs "Burgers")
-- Variations baked into names (e.g., "Churros 12pcs" vs "Churros" with variations)
-- Different formats for similar data
+3. Environment Variables
 
-**Your job:** Clean, normalize, and combine these into a unified schema, then build the AI dashboard.
+Create a .env file in the root directory:
+Code snippet
 
----
+NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_key
+OPENAI_API_KEY=your_openai_key
 
-## Requirements
+4. Data Ingestion
 
-### 1. Data Cleaning & Normalization
-- **Parse all JSON files** and understand their structures
-- **Design a Supabase database schema** that unifies all sources
-- Handle different formats for: timestamps, amounts, locations, order types, items
-- **Clean and normalize** the data (fix inconsistencies, standardize formats)
-- **Insert into Supabase** - Write scripts to populate your database
-- **Document your approach** - show your thought process and decisions
+Install Python dependencies and run the ingestion scripts to populate your database:
+Bash
 
-### 2. Natural Language Query Interface
-- Text input where users describe what they want to see
-- Use an LLM to interpret requests and map them to data queries
-- Handle ambiguous queries gracefully (e.g., "sales" could mean revenue or order count)
-- **Structure your prompts** to return structured data for reliable parsing
+pip install -r requirements.txt
+python ingest_toast.py
+python ingest_doordash.py
+python ingest_square.py
 
-### 3. Dynamic Visualization Engine
-- Generate appropriate chart types based on query intent (bar, line, pie, table, metric cards, etc.)
-- The system should choose the visualization type, not the user
-- Handle multiple data series and complex comparisons
+📊 Database Schema & Data Normalization
+Schema Design
 
-### 4. Interactive Dashboard
-- Generated visualizations appear as "widgets" (charts + text summaries)
-- Users can add multiple widgets from different queries
-- Clean, usable interface with meaningful insights
-- Support for various chart types: bar, line, pie, tables, metrics
+The architecture uses a normalized Postgres schema designed for high-performance aggregations.
+Cleaning & Normalization Approach
 
----
+    Deduplication: Uses a stable source key (source, source_order_id) to ensure idempotent re-runs.
 
-## Technical Requirements
+    Monetary Precision: All currency is stored as integer cents (bigint) to avoid floating-point rounding errors.
 
-- **Frontend:** **Next.js** with TypeScript
-- **Backend/Data Processing:** Choose what works best for you:
-  - Next.js API routes (keep it all in one project)
-  - Express.js with TypeScript (separate backend)
-  - Python (FastAPI, Flask, or scripts for data transformations)
-- **Database:** **Supabase** (PostgreSQL) - Store your normalized data here
-- **AI Integration:** You'll need an API key for your chosen LLM provider. Structure your code so we can easily plug in our own key for testing.
-- **Charting:** Any library (Recharts, Chart.js, D3, Plotly, etc.)
-- **Styling:** Your choice. We care more about functionality than pixel-perfection, but it should be usable.
+        item_sales_cents: Net sales (pre-tax/tip).
 
-### Why Supabase?
-We use Supabase internally at Clave. This lets us evaluate:
-- Your database schema design
-- How you model restaurant data
-- SQL query patterns for analytics
-- Integration with a real database (not just in-memory)
+        total_cents: Gross revenue (includes tax, tip, fees).
 
----
+    Text Normalization: Centralized in normalize.py. It strips emojis, collapses whitespace, and standardizes casing for both item names and categories.
 
-## What We're Evaluating
+    Canonical Categories: Maps disparate source categories into four predictable buckets: Beverages, Food, Desserts, and Entrees (default).
 
-| Area | What We Look For |
-|------|------------------|
-| **Data Cleaning** | How you parse, understand, and normalize messy JSON data into clean structures |
-| **Database Schema** | Your Supabase table design, relationships, and indexing for analytics queries |
-| **Data Transformation** | Handling different formats, missing data, and creating consistent representations |
-| **AI Integration** | Natural language understanding, query parsing, and visualization generation |
-| **Dashboard UX** | Clean interface with meaningful charts, tables, and text summaries |
-| **Code Quality** | Well-structured code (TypeScript/Python) with good error handling and documentation |
-| **Problem Solving** | Creative solutions to data challenges and edge cases |
+🤖 AI Query Parsing & Logic
 
----
+The dashboard uses a LangGraph-based Agentic Workflow to translate natural language into structured data visualizations.
+The Agent Pipeline
 
-## Deliverables
+    Planner (GPT-4o-mini): Analyzes the user query against known locations and dates. It outputs a Plan (JSON) containing one or more actions.
 
-1. **Forked GitHub Repository** (keep it public)
-2. **Code Structure** showing:
-   - Data ingestion/normalization scripts
-   - Supabase schema (migrations or SQL files)
-   - AI integration logic
-   - Visualization components
-3. **README** with:
-   - Setup/installation instructions (including Supabase setup)
-   - Data cleaning/normalization approach and database schema design
-   - AI query parsing and visualization logic
-   - Assumptions, tradeoffs, and design decisions
-   - What you'd improve with more time
-4. **Working Demo** - Deployed (Vercel, Netlify, etc.) or clear local setup instructions
-5. **Supabase Project** - Share access or provide SQL export of your schema
-6. **Environment Variables** - Email us your `.env` file or credentials (API keys, Supabase URL/key, etc.) so we can run your project locally. Send to `carlos@tryclave.ai` and `valentina@tryclave.ai`
+    Executor: Validates the plan and performs the "Truth Layer" logic.
 
----
+        Self-Correction: If a user asks for a single day, the executor automatically injects an hourly breakdown even if the LLM missed it.
 
-## Difficulty & Expectations
+        Deterministic Routing: Common queries (like "DoorDash totals") bypass the LLM for speed and 100% accuracy.
 
-This assessment tests **real data engineering + AI integration skills**. You'll need to:
+    Output: Returns a union of widgets (Bar, Line, Pie, Metric, AOV, or Table).
 
-- Parse and clean 6 different JSON data formats
-- Design a Supabase database schema for restaurant analytics
-- Handle data type conversions, missing fields, and structural differences
-- Build an AI system that understands natural language queries
-- Create a functional dashboard with charts and text using TypeScript
+UI Rendering
 
-**We expect production-quality code** with proper error handling, clean architecture, and good documentation.
+The frontend (Next.js) dynamically renders components based on the widget type:
 
-## Suggested Workflow
+    Metric Cards: For big-picture numbers.
 
-1. **Explore the data** - Spend time understanding each JSON file's structure
-2. **Set up Supabase** - Create a project at [supabase.com](https://supabase.com)
-3. **Design your schema** - Plan your database tables and relationships
-4. **Build data cleaning** - Write scripts to parse, clean, and insert into Supabase
-5. **Create the dashboard** - Build the UI with Next.js (use API routes or Express for backend)
-6. **Add AI integration** - Connect LLM to parse queries and generate SQL/visualizations
-7. **Polish & test** - Make it look good and handle edge cases
+    AOV Charts: Specialized logic for Average Order Value by location.
 
-## Time & Deadline
+    Summary Block: An "answer-first" text summary generated by the executor to highlight peaks and totals.
 
-- **Suggested effort:** 8-12 hours (but no hard limit—take the time you need to do it well)
-- **Deadline:** `January 3rd, 2026 at 11:59pm`
-- **AI Usage:** Encouraged! Use Cursor, Claude Code, and/or whatever tools help you build better.
+🧠 Design Decisions & Tradeoffs
 
----
+    View-Based Analytics: I chose to use Postgres Views as a "Gold Layer." This keeps the application logic simple; the LLM queries a clean view rather than performing complex multi-table joins.
 
-## Questions?
+    Integer Math: Storing cents instead of decimals is a non-negotiable decision for financial integrity in restaurant tech.
 
-If anything is unclear, reach out to `carlos@tryclave.ai` or `valentina@tryclave.ai`. Asking good questions is a plus, not a minus.
+    LangGraph over Simple Chains: Using a graph allows for future expansion (like multi-step reasoning or clarification loops) which a simple prompt-to-SQL chain lacks.
 
----
+    Safe JSON Parsing: Implemented a fallback parser for the LLM to handle cases where the model wraps JSON in markdown blocks.
 
-## Getting Started
+🛠 Future Improvements
 
-```bash
-# Fork this repo to your own GitHub account, then clone your fork
-git clone [your-fork-url]
+    Caching Layer: Implement Redis caching for common aggregate queries to reduce Supabase/LLM hits.
 
-# Check out the mock data
-ls data/sources/
+    SQL Generation: Move from a fixed "Action" executor to a controlled Text-to-SQL approach for more "ad-hoc" flexibility.
 
-# Set up Next.js (required for frontend)
-npx create-next-app@latest my-dashboard --typescript
+    Enhanced Item Mapping: Use fuzzy matching or LLM-based clustering to group similar items (e.g., "Coke" and "Coca-Cola") more accurately.
 
-# Backend options (choose one):
-# Option A: Use Next.js API routes (already included)
-# Option B: Separate Express backend
-mkdir my-api && cd my-api && npm init -y && npm install express typescript @types/express ts-node
-# Option C: Python for data processing/API
-pip install fastapi uvicorn supabase pandas
-
-# Set up Supabase
-# 1. Create a project at https://supabase.com
-# 2. Get your project URL and anon key from Settings > API
-# 3. Install the client: npm install @supabase/supabase-js (or: pip install supabase)
-
-# Start building!
-```
-
-Good luck! We're excited to see what you create. 🚀
+    Multi-Turn Memory: Enhance the agent's ability to remember context across more than two turns of conversation.
